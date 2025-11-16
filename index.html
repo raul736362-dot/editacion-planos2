@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Editor 30000×30000 — Taming.io (final)</title>
+<style>
+  :root { --panel-w: 300px; --bg: #111; --panel-bg:#1f1f22; --accent:#2ea7ff; --ui-z:99999; }
+  html,body{height:100%;margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:#ddd;overflow:hidden}
+  .app{display:flex;height:100vh;}
+
+  /* PANEL */
+  #panel{
+    width:var(--panel-w);
+    background:var(--panel-bg);
+    border-left:4px solid var(--accent);
+    padding:10px;box-sizing:border-box;overflow:auto;
+  }
+  #panel h2{margin:4px 0 10px;text-align:center;color:#fff;font-size:16px}
+  .cat{color:var(--accent);margin-top:12px;font-weight:700;font-size:13px}
+  .gridItems{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+  .item{display:flex;gap:8px;align-items:center;background:#2b2b2d;padding:6px;border-radius:8px;cursor:pointer;border:2px solid transparent}
+  .item:hover{transform:scale(1.01);background:#343436}
+  .item.selected{border-color:var(--accent)}
+  .item img{width:44px;height:44px;object-fit:contain;border-radius:6px}
+  .item p{margin:0;font-size:13px;color:#e9eef2}
+
+  /* VIEWPORT */
+  .viewport{flex:1;position:relative;overflow:hidden;background:#000;touch-action:none}
+
+  /* MAP (grand) */
+  #map{
+    position:absolute;
+    left:0;top:0;
+    width:30000px;height:30000px;
+    transform-origin:0 0;
+    background-color:#222;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(rgba(0,0,0,0.25) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,0,0,0.25) 1px, transparent 1px);
+    background-size: 40px 40px, 40px 40px, 200px 200px, 200px 200px;
+    will-change: transform;
+  }
+
+  /* Placed items (children of #map -> they scale with #map) */
+  .placed{position:absolute;user-select:none;touch-action:none;cursor:grab;-webkit-user-drag:none}
+  .placed.selected{outline: 3px solid rgba(46,167,255,0.9);outline-offset:-4px;border-radius:6px}
+
+  /* Ghost (follows mouse) - fixed, NOT affected by map scale */
+  .ghost {
+    position: fixed;
+    pointer-events: none;
+    transform-origin: center center;
+    z-index: 200000;
+    will-change: transform, left, top;
+  }
+
+  /* Floating action buttons (delete + duplicate) */
+  #deleteBtn, #duplicateBtn {
+    position: fixed;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width:34px;height:34px;border-radius:50%;
+    color:#fff;font-weight:700;border:2px solid #fff;
+    z-index:var(--ui-z);cursor:pointer;box-shadow:0 6px 16px rgba(0,0,0,0.6);
+    display:none;
+  }
+  #deleteBtn { background: #ff5050; }
+  #duplicateBtn { background: #5f96ff; }
+
+  /* Zoom controls */
+  .zoomControls{
+    position:fixed; right:20px; bottom:80px; z-index:var(--ui-z);
+    display:flex;flex-direction:column;gap:8px;
+  }
+  .zoomBtn{
+    width:44px;height:36px;border-radius:8px;background:#2b2b2d;color:#fff;border:2px solid transparent;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:700;
+  }
+  .zoomBtn:hover{background:#3a3a3a}
+
+  /* status */
+  .status{position:fixed;left:16px;bottom:16px;background:rgba(0,0,0,0.45);padding:8px 10px;border-radius:8px;color:#ddd;font-size:13px;z-index:var(--ui-z)}
+
+  @media (max-width:900px){:root{--panel-w:220px}.item img{width:36px;height:36px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="viewport" id="viewport">
+    <div id="map"></div>
+  </div>
+
+  <div id="panel">
+    <h2>Panel de edificios</h2>
+
+    <!-- Paredes -->
+    <div class="cat">Paredes</div>
+    <div class="gridItems">
+      <div class="item" data-id="wall_diamond"><img src="https://static.wikia.nocookie.net/tamingio/images/4/4e/Diamond-wall.png/revision/latest?cb=20221122102833"><p>Pared Diamante</p></div>
+      <div class="item" data-id="wall_emerald"><img src="https://static.wikia.nocookie.net/tamingio/images/5/5e/Emerald-wall.png/revision/latest?cb=20221122102833"><p>Pared Esmeralda</p></div>
+      <div class="item" data-id="wall_amber"><img src="https://static.wikia.nocookie.net/tamingio/images/b/bd/Amber-wall.png/revision/latest?cb=20221122102832"><p>Pared Ámbar</p></div>
+    </div>
+
+    <!-- Puertas -->
+    <div class="cat">Puertas</div>
+    <div class="gridItems">
+      <div class="item" data-id="door_emerald"><img src="https://static.wikia.nocookie.net/tamingio/images/2/22/Emerald-door.png/revision/latest?cb=20221210221546"><p>Puerta Esmeralda</p></div>
+      <div class="item" data-id="door_amber"><img src="https://static.wikia.nocookie.net/tamingio/images/3/37/Amber-door.png/revision/latest?cb=20221210221355"><p>Puerta Ámbar</p></div>
+    </div>
+
+    <!-- Molinos -->
+    <div class="cat">Molinos</div>
+    <div class="gridItems">
+      <div class="item" data-id="windmill_diamond"><img src="https://static.wikia.nocookie.net/tamingio/images/7/77/Diamond-windmill.png/revision/latest?cb=20221210221844"><p>Molino Diamante</p></div>
+      <div class="item" data-id="windmill_amber"><img src="https://static.wikia.nocookie.net/tamingio/images/4/45/Amber-windmill.png/revision/latest?cb=20221210221807"><p>Molino Ámbar</p></div>
+    </div>
+
+    <!-- Torretas - Spectrum -->
+    <div class="cat">Torretas - Spectrum</div>
+    <div class="gridItems">
+      <div class="item" data-id="tower_spectrum_emerald"><img src="https://static.wikia.nocookie.net/tamingio/images/5/50/Emerald-spectrum_tower.png/revision/latest?cb=20230902171924"><p>Spectrum Esmeralda</p></div>
+      <div class="item" data-id="tower_spectrum_amber"><img src="https://static.wikia.nocookie.net/tamingio/images/b/b7/Amber-spectrum_tower.png/revision/latest?cb=20230902171835"><p>Spectrum Ámbar</p></div>
+      <div class="item" data-id="tower_spectrum_diamond"><img src="https://static.wikia.nocookie.net/tamingio/images/1/12/Diamond-spectrum_tower.png/revision/latest?cb=20230902171858"><p>Spectrum Diamante</p></div>
+    </div>
+
+    <!-- Torretas - Roca -->
+    <div class="cat">Torretas - Roca</div>
+    <div class="gridItems">
+      <div class="item" data-id="tower_rock_emerald"><img src="https://static.wikia.nocookie.net/tamingio/images/e/e2/Emerald-rock_tower.png/revision/latest?cb=20230902171904"><p>Roca Esmeralda</p></div>
+      <div class="item" data-id="tower_rock_amber"><img src="https://static.wikia.nocookie.net/tamingio/images/8/81/Amber-rock_tower.png/revision/latest?cb=20230902171816"><p>Roca Ámbar</p></div>
+      <div class="item" data-id="tower_rock_diamond"><img src="https://static.wikia.nocookie.net/tamingio/images/e/e6/Diamond-rock_tower.png/revision/latest?cb=20230902171840"><p>Roca Diamante</p></div>
+    </div>
+
+    <!-- Torretas - Agua -->
+    <div class="cat">Torretas - Agua</div>
+    <div class="gridItems">
+      <div class="item" data-id="tower_water_emerald"><img src="https://static.wikia.nocookie.net/tamingio/images/5/5d/Emerald-water_tower.png/revision/latest?cb=20230902171921"><p>Agua Esmeralda</p></div>
+      <div class="item" data-id="tower_water_amber"><img src="https://static.wikia.nocookie.net/tamingio/images/4/45/Amber-water_tower.png/revision/latest?cb=20230902171832"><p>Agua Ámbar</p></div>
+      <div class="item" data-id="tower_water_diamond"><img src="https://static.wikia.nocookie.net/tamingio/images/f/f9/Diamond-water_tower.png/revision/latest?cb=20230902171856"><p>Agua Diamante</p></div>
+    </div>
+
+    <!-- Torretas - Reparador -->
+    <div class="cat">Torretas - Reparador</div>
+    <div class="gridItems">
+      <div class="item" data-id="tower_repair_emerald"><img src="https://static.wikia.nocookie.net/tamingio/images/a/a4/Emerald-repair_tower.png/revision/latest?cb=20230902171912"><p>Reparador Esmeralda</p></div>
+      <div class="item" data-id="tower_repair_amber"><img src="https://static.wikia.nocookie.net/tamingio/images/1/1c/Amber-repair_tower.png/revision/latest?cb=20230902171824"><p>Reparador Ámbar</p></div>
+      <div class="item" data-id="tower_repair_diamond"><img src="https://static.wikia.nocookie.net/tamingio/images/4/41/Diamond-repair_tower.png/revision/latest?cb=20230902171848"><p>Reparador Diamante</p></div>
+    </div>
+
+    <!-- Torretas - Eléctrica -->
+    <div class="cat">Torretas - Eléctrica</div>
+    <div class="gridItems">
+      <div class="item" data-id="tower_electric_emerald"><img src="https://static.wikia.nocookie.net/tamingio/images/2/26/Emerald-electric_tower.png/revision/latest?cb=20230902171907"><p>Eléctrica Esmeralda</p></div>
+      <div class="item" data-id="tower_electric_amber"><img src="https://static.wikia.nocookie.net/tamingio/images/4/41/Amber-electric_tower.png/revision/latest?cb=20230902171819"><p>Eléctrica Ámbar</p></div>
+      <div class="item" data-id="tower_electric_diamond"><img src="https://static.wikia.nocookie.net/tamingio/images/7/7b/Diamond-electric_tower.png/revision/latest?cb=20230902171843"><p>Eléctrica Diamante</p></div>
+    </div>
+
+    <!-- Torretas - Hielo -->
+    <div class="cat">Torretas - Hielo</div>
+    <div class="gridItems">
+      <div class="item" data-id="tower_ice_emerald"><img src="https://static.wikia.nocookie.net/tamingio/images/a/a9/Emerald-ice_tower.png/revision/latest?cb=20230902171917"><p>Hielo Esmeralda</p></div>
+      <div class="item" data-id="tower_ice_amber"><img src="https://static.wikia.nocookie.net/tamingio/images/e/e3/Amber-ice_tower.png/revision/latest?cb=20230902171829"><p>Hielo Ámbar</p></div>
+      <div class="item" data-id="tower_ice_diamond"><img src="https://static.wikia.nocookie.net/tamingio/images/b/bc/Diamond-ice_tower.png/revision/latest?cb=20230902171853"><p>Hielo Diamante</p></div>
+    </div>
+
+    <!-- Torretas - Fuego -->
+    <div class="cat">Torretas - Fuego</div>
+    <div class="gridItems">
+      <div class="item" data-id="tower_fire_emerald"><img src="https://static.wikia.nocookie.net/tamingio/images/c/ca/Emerald-fire_tower.png/revision/latest?cb=20230902171901"><p>Fuego Esmeralda</p></div>
+      <div class="item" data-id="tower_fire_amber"><img src="https://static.wikia.nocookie.net/tamingio/images/3/35/Amber-fire_tower.png/revision/latest?cb=20230902171814"><p>Fuego Ámbar</p></div>
+      <div class="item" data-id="tower_fire_diamond"><img src="https://static.wikia.nocookie.net/tamingio/images/b/b6/Diamond-fire_tower.png/revision/latest?cb=20230902171837"><p>Fuego Diamante</p></div>
+    </div>
+
+    <!-- Torretas - Planta -->
+    <div class="cat">Torretas - Planta</div>
+    <div class="gridItems">
+      <div class="item" data-id="tower_plant_emerald"><img src="https://static.wikia.nocookie.net/tamingio/images/c/c9/Emerald-plant_tower.png/revision/latest?cb=20230902171915"><p>Planta Esmeralda</p></div>
+      <div class="item" data-id="tower_plant_amber"><img src="https://static.wikia.nocookie.net/tamingio/images/0/05/Amber-plant_tower.png/revision/latest?cb=20230902171826"><p>Planta Ámbar</p></div>
+      <div class="item" data-id="tower_plant_diamond"><img src="http://static.wikia.nocookie.net/tamingio/images/e/e0/Diamond-plant_tower.png/revision/latest?cb=20230902171851"><p>Planta Diamante</p></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- action buttons -->
+<div id="deleteBtn">X</div>
+<div id="duplicateBtn">⧉</div>
+
+<div class="zoomControls" id="zoomControls">
+  <div class="zoomBtn" id="zoomIn">+</div>
+  <div class="zoomBtn" id="zoomOut">−</div>
+  <div class="zoomBtn" id="zoomReset">Reset</div>
+</div>
+
+<div class="status" id="status">Clic derecho + arrastra = pan. Rueda = zoom. W A S D para pan. Click en edificio para seleccionar.</div>
+
+<script>
+/* -------------------------
+   Variables y elements
+   ------------------------- */
+const viewport = document.getElementById('viewport');
+const map = document.getElementById('map');
+const panel = document.getElementById('panel');
+const items = Array.from(document.querySelectorAll('.item'));
+const deleteBtn = document.getElementById('deleteBtn');
+const duplicateBtn = document.getElementById('duplicateBtn');
+const status = document.getElementById('status');
+const zoomInBtn = document.getElementById('zoomIn');
+const zoomOutBtn = document.getElementById('zoomOut');
+const zoomResetBtn = document.getElementById('zoomReset');
+
+let placed = []; // {el, id, x, y, w, h}
+let selected = null;
+let ghost = null;
+
+/* Transform state */
+let tx = 0, ty = 0, scale = 1;
+const MIN_SCALE = 0.1, MAX_SCALE = 3;
+
+/* center map initially */
+function centerMap(){
+  const vp = viewport.getBoundingClientRect();
+  tx = Math.max(0, (vp.width - 30000) / 2);
+  ty = Math.max(0, (vp.height - 30000) / 2);
+  applyTransform();
+}
+centerMap();
+
+function applyTransform(){
+  map.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+  updateActionButtonsPosition();
+}
+
+/* helper: client -> map internal coords */
+function clientToMapCoords(clientX, clientY){
+  const mapRect = map.getBoundingClientRect();
+  const x = (clientX - mapRect.left) / scale;
+  const y = (clientY - mapRect.top) / scale;
+  return { x, y };
+}
+
+/* -------------------------
+   Panel: drag new item preview and drop
+   (ghost is FIXED and will NOT scale visually)
+   ------------------------- */
+let draggingNew = null; // {id, src, el, w, h}
+items.forEach(it=>{
+  it.addEventListener('pointerdown', e=>{
+    e.preventDefault();
+    const id = it.dataset.id;
+    const src = it.querySelector('img').src;
+
+    // highlight selection
+    items.forEach(x=>x.classList.remove('selected'));
+    it.classList.add('selected');
+
+    // create ghost (fixed on screen)
+    const img = new Image();
+    img.src = src;
+    img.className = 'ghost';
+    img.style.left = (e.clientX) + 'px';
+    img.style.top = (e.clientY) + 'px';
+    img.style.opacity = '0.95';
+    img.style.transform = `scale(${1/scale})`; // inverse scale so it looks same regardless of map zoom
+    document.body.appendChild(img);
+
+    draggingNew = { id, src, el: img, w:0, h:0 };
+    img.onload = ()=>{
+      draggingNew.w = img.naturalWidth;
+      draggingNew.h = img.naturalHeight;
+      // set visual pixel size to natural size multiplied by inverse scale so user sees consistent size
+      img.style.width = draggingNew.w + 'px';
+      img.style.height = draggingNew.h + 'px';
+      img.style.transform = `scale(${1/scale})`;
+    };
+
+    const move = ev=>{
+      if(!draggingNew) return;
+      draggingNew.el.style.left = (ev.clientX - (draggingNew.w||20)/2) + 'px';
+      draggingNew.el.style.top  = (ev.clientY - (draggingNew.h||20)/2) + 'px';
+      // ensure inverse scaling so ghost visual stays constant
+      draggingNew.el.style.transform = `scale(${1/scale})`;
+    };
+    const up = ev=>{
+      if(!draggingNew) return;
+      const mapRect = map.getBoundingClientRect();
+      const isInside = ev.clientX >= mapRect.left && ev.clientX <= mapRect.right && ev.clientY >= mapRect.top && ev.clientY <= mapRect.bottom;
+      if(isInside){
+        const coords = clientToMapCoords(ev.clientX, ev.clientY);
+        placeElementAt(id, src, Math.round(coords.x - (draggingNew.w/2)), Math.round(coords.y - (draggingNew.h/2)));
+      }
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      if(draggingNew && draggingNew.el){ draggingNew.el.remove(); draggingNew = null; }
+      items.forEach(x=>x.classList.remove('selected'));
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+  });
+});
+
+/* -------------------------
+   place DOM image on map at map coords (map children -> they scale with map)
+   ------------------------- */
+function placeElementAt(id, src, x, y){
+  const img = new Image();
+  img.src = src;
+  img.className = 'placed';
+  img.style.left = x + 'px';
+  img.style.top  = y + 'px';
+  img.draggable = false;
+  img.style.zIndex = 1000;
+
+  // default size will be natural; when map is scaled the element will visually scale
+  img.onload = ()=>{
+    img.width = img.naturalWidth;
+    img.height = img.naturalHeight;
+    img.style.width = img.naturalWidth + 'px';
+    img.style.height = img.naturalHeight + 'px';
+  };
+
+  // select & start move
+  img.addEventListener('pointerdown', ev=>{
+    ev.stopPropagation();
+    selectPlaced(img);
+    startMovePlaced(ev, img);
+  });
+
+  map.appendChild(img);
+  placed.push({ el: img, id, x, y, w: img.naturalWidth||0, h: img.naturalHeight||0 });
+}
+
+/* -------------------------
+   Selection handling
+   ------------------------- */
+function selectPlaced(img){
+  if(selected && selected !== img) selected.classList.remove('selected');
+  selected = img;
+  selected.classList.add('selected');
+  updateActionButtonsPosition();
+}
+map.addEventListener('pointerdown', ev=>{
+  if(ev.button === 0){
+    if(selected){ selected.classList.remove('selected'); selected = null; hideActionButtons(); }
+  }
+});
+
+/* -------------------------
+   Action buttons (delete + duplicate)
+   ------------------------- */
+function updateActionButtonsPosition(){
+  if(!selected){
+    hideActionButtons();
+    return;
+  }
+  // get bounding client rect of selected (already transformed by map scale)
+  const r = selected.getBoundingClientRect();
+  // position delete to top-right
+  deleteBtn.style.left = (r.left + r.width - 12) + 'px';
+  deleteBtn.style.top  = (r.top - 12) + 'px';
+  deleteBtn.style.display = 'flex';
+  // duplicate to top-left of the element
+  duplicateBtn.style.left = (r.left - 40) + 'px';
+  duplicateBtn.style.top  = (r.top - 12) + 'px';
+  duplicateBtn.style.display = 'flex';
+}
+function hideActionButtons(){
+  deleteBtn.style.display = 'none';
+  duplicateBtn.style.display = 'none';
+}
+
+/* delete */
+deleteBtn.addEventListener('click', ()=>{
+  if(!selected) return;
+  selected.remove();
+  placed = placed.filter(p=>p.el !== selected);
+  selected = null;
+  hideActionButtons();
+});
+document.addEventListener('keydown', (ev)=>{
+  if(ev.key === 'Delete' && selected){
+    selected.remove();
+    placed = placed.filter(p=>p.el !== selected);
+    selected = null;
+    hideActionButtons();
+  }
+});
+
+/* duplicate */
+duplicateBtn.addEventListener('click', ()=>{
+  if(!selected) return;
+  const entry = placed.find(p=>p.el === selected);
+  if(!entry) return;
+  // duplicate at +20 map pixels to the right
+  const newX = (entry.x || 0) + 20;
+  const newY = (entry.y || 0) + 20;
+  placeElementAt(entry.id, selected.src, newX, newY);
+});
+
+/* -------------------------
+   Move existing placed object
+   ------------------------- */
+let moving = null;
+let moveOffsetX = 0, moveOffsetY = 0;
+function startMovePlaced(ev, el){
+  ev.preventDefault();
+  moving = el;
+  const r = el.getBoundingClientRect();
+  // offset in screen space
+  moveOffsetX = ev.clientX - r.left;
+  moveOffsetY = ev.clientY - r.top;
+
+  const move = e=>{
+    if(!moving) return;
+    const mapCoords = clientToMapCoords(e.clientX, e.clientY);
+    // offset needs to be converted into map-coords by dividing by scale
+    const x = mapCoords.x - (moveOffsetX/scale);
+    const y = mapCoords.y - (moveOffsetY/scale);
+    moving.style.left = Math.round(x) + 'px';
+    moving.style.top  = Math.round(y) + 'px';
+    if(moving === selected) updateActionButtonsPosition();
+  };
+  const up = ()=>{
+    const entry = placed.find(p=>p.el === moving);
+    if(entry){
+      entry.x = parseInt(moving.style.left,10) || 0;
+      entry.y = parseInt(moving.style.top,10) || 0;
+      entry.w = moving.naturalWidth || moving.width;
+      entry.h = moving.naturalHeight || moving.height;
+    }
+    moving = null;
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', up);
+}
+
+/* -------------------------
+   Panning (right-click drag) & WASD continuous
+   ------------------------- */
+let panning = false, panStart = {x:0,y:0}, txStart=0, tyStart=0;
+const vpRect = ()=>viewport.getBoundingClientRect();
+
+viewport.addEventListener('pointerdown', ev=>{
+  if(ev.button === 2){
+    ev.preventDefault();
+    panning = true;
+    panStart.x = ev.clientX;
+    panStart.y = ev.clientY;
+    txStart = tx; tyStart = ty;
+    viewport.style.cursor = 'grabbing';
+  }
+});
+viewport.addEventListener('pointermove', ev=>{
+  if(!panning) return;
+  const dx = ev.clientX - panStart.x;
+  const dy = ev.clientY - panStart.y;
+  tx = txStart + dx;
+  ty = tyStart + dy;
+  clampAndApply();
+});
+viewport.addEventListener('pointerup', ev=>{
+  if(ev.button === 2 && panning){ panning = false; viewport.style.cursor='default'; }
+});
+viewport.addEventListener('pointercancel', ()=>{ panning=false; viewport.style.cursor='default'; });
+viewport.addEventListener('contextmenu', e=>e.preventDefault());
+
+let keys = {w:false,a:false,s:false,d:false};
+document.addEventListener('keydown', e=>{
+  const k = e.key.toLowerCase();
+  if(k === 'w') keys.w = true;
+  if(k === 'a') keys.a = true;
+  if(k === 's') keys.s = true;
+  if(k === 'd') keys.d = true;
+});
+document.addEventListener('keyup', e=>{
+  const k = e.key.toLowerCase();
+  if(k === 'w') keys.w = false;
+  if(k === 'a') keys.a = false;
+  if(k === 's') keys.s = false;
+  if(k === 'd') keys.d = false;
+});
+(function panLoop(){
+  const speed = 30;
+  let moved = false;
+  if(keys.w){ ty += speed; moved = true; }
+  if(keys.s){ ty -= speed; moved = true; }
+  if(keys.a){ tx += speed; moved = true; }
+  if(keys.d){ tx -= speed; moved = true; }
+  if(moved) clampAndApply();
+  requestAnimationFrame(panLoop);
+})();
+
+function clampAndApply(){
+  const vp = vpRect();
+  const maxTx = 200;
+  const minTx = vp.width - 30000*scale - 200;
+  const maxTy = 200;
+  const minTy = vp.height - 30000*scale - 200;
+  if(tx > maxTx) tx = maxTx;
+  if(tx < minTx) tx = minTx;
+  if(ty > maxTy) ty = maxTy;
+  if(ty < minTy) ty = minTy;
+  applyTransform();
+}
+
+/* -------------------------
+   Zoom (wheel + buttons)
+   ------------------------- */
+viewport.addEventListener('wheel', (e)=>{
+  if(e.ctrlKey) return;
+  e.preventDefault();
+  const delta = -e.deltaY;
+  const zoomFactor = delta > 0 ? 1.12 : 1/1.12;
+  const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * zoomFactor));
+  zoomAtPoint(e.clientX, e.clientY, newScale);
+}, { passive: false });
+
+function zoomAtPoint(clientX, clientY, newScale){
+  const mapRect = map.getBoundingClientRect();
+  const mapX = (clientX - mapRect.left) / scale;
+  const mapY = (clientY - mapRect.top) / scale;
+
+  // compute elementPageLeft/Top
+  const elementPageLeft = mapRect.left - tx * scale;
+  const elementPageTop  = mapRect.top  - ty * scale;
+
+  const newTx = clientX - mapX * newScale - elementPageLeft;
+  const newTy = clientY - mapY * newScale - elementPageTop;
+
+  scale = newScale;
+  tx = newTx;
+  ty = newTy;
+  clampAndApply();
+
+  // update ghost inverse scale (if ghost exists keep it visually constant)
+  if(draggingNew && draggingNew.el){
+    draggingNew.el.style.transform = `scale(${1/scale})`;
+  }
+  // if user has a floating ghost created by other code, keep it updated too
+  if(ghost){
+    ghost.style.transform = `scale(${1/scale})`;
+  }
+}
+
+zoomInBtn.addEventListener('click', ()=>{
+  const newScale = Math.min(MAX_SCALE, scale * 1.2);
+  const vp = viewport.getBoundingClientRect();
+  zoomAtPoint(vp.left + vp.width/2, vp.top + vp.height/2, newScale);
+});
+zoomOutBtn.addEventListener('click', ()=>{
+  const newScale = Math.max(MIN_SCALE, scale / 1.2);
+  const vp = viewport.getBoundingClientRect();
+  zoomAtPoint(vp.left + vp.width/2, vp.top + vp.height/2, newScale);
+});
+zoomResetBtn.addEventListener('click', ()=>{
+  scale = 1;
+  centerMap();
+});
+
+/* -------------------------
+   Helpers: update action buttons when window scroll/resize
+   ------------------------- */
+window.addEventListener('resize', updateActionButtonsPosition);
+window.addEventListener('scroll', updateActionButtonsPosition);
+
+/* initial status text */
+status.textContent = 'Clic derecho + arrastra = pan. Rueda = zoom. W A S D para pan. Click en edificio para seleccionar. Delete o X para borrar, ⧉ para duplicar.';
+
+/* End of script */
+</script>
+</body>
+</html>
